@@ -60,6 +60,14 @@ class AppHostTestInventoryTests(unittest.TestCase):
                 required_target="cmuxTests",
             )
 
+    def test_rejects_enabled_disabled_overlap(self) -> None:
+        identifier = "cmuxTests/ExampleTests/testOne"
+        with self.assertRaisesRegex(ValueError, "both enabled and disabled"):
+            MODULE.normalize(
+                document(enabled=[identifier], disabled=[identifier]),
+                required_target="cmuxTests",
+            )
+
     def test_rejects_other_test_targets(self) -> None:
         with self.assertRaisesRegex(ValueError, "outside cmuxTests"):
             MODULE.normalize(
