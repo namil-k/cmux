@@ -589,8 +589,8 @@ jobs:
           python3 tests/test_app_host_test_products.py
           python3 tests/test_reuse_app_host_products.py
           python3 tests/test_ci_product_publication.py
-          python3 -m pytest -q tests/test_ci_app_host_test_inventory.py
-          python3 -m pytest -q tests/test_ci_app_host_failure_ratchet.py
+          python3 tests/test_ci_app_host_test_inventory.py
+          python3 tests/test_ci_app_host_failure_ratchet.py
 
       - name: Validate Python R2 appcast upload guard
         run: ./tests/test_ci_r2_upload_python.sh
@@ -2071,7 +2071,8 @@ jobs:
                 --exit-code "$batch_status" 2>&1)"
               ratchet_status=$?
               set -e
-              printf '%s\n' "$ratchet_message" | tee -a "$batch_output"
+              printf '%s\n' "$ratchet_message"
+              printf '%s\n' "$ratchet_message" >>"$batch_output"
               if [ "$ratchet_status" -eq 0 ]; then
                 return 0
               fi
