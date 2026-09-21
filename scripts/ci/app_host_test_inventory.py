@@ -71,6 +71,13 @@ def normalize(document: dict[str, Any], *, required_target: str) -> dict[str, An
             + ", ".join(unexpected[:10])
         )
 
+    contradictory = sorted(enabled & disabled)
+    if contradictory:
+        raise ValueError(
+            "built app-host inventory marks tests both enabled and disabled: "
+            + ", ".join(contradictory[:10])
+        )
+
     suites = Counter()
     for identifier in enabled:
         parts = identifier.split("/")
