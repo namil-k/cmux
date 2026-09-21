@@ -35,6 +35,11 @@ STATE_CLASSES = {
     "exact-product-reuse",
     "resident-hot",
 }
+ENVIRONMENT_CLASSES = {
+    "isolated-portable",
+    "isolated-build",
+    "isolated-console-test",
+}
 
 
 class ProfileError(RuntimeError):
@@ -142,6 +147,7 @@ def validate_registry(registry: dict[str, Any]) -> None:
                 "timeout",
                 "resource_class",
                 "network_class",
+                "environment_class",
                 "benchmark_state_classes",
                 "parameters",
                 "runtime_inputs",
@@ -194,6 +200,8 @@ def validate_registry(registry: dict[str, Any]) -> None:
             or timeout["seconds"] <= 0
         ):
             raise ProfileError(f"{profile_id}: timeout is invalid")
+        if profile["environment_class"] not in ENVIRONMENT_CLASSES:
+            raise ProfileError(f"{profile_id}: environment class is invalid")
         states = profile["benchmark_state_classes"]
         if (
             not isinstance(states, list)
@@ -575,6 +583,7 @@ def semantic_key(
         "source": {"repository": source["repository"], "tree": source["tree"]},
         "profile": {"id": profile["id"], "generation": profile["generation"]},
         "semantic_validator": profile["semantic_validator"],
+        "environment_class": profile["environment_class"],
         "parameters": parameters,
         "runtime_inputs": [
             {
@@ -644,6 +653,58 @@ def publish_result(result: dict[str, Any], path_raw: str | None) -> None:
     os.replace(temporary, path)
 
 
+def workload_environment(
+    profile: dict[str, Any],
+    state_root: Path,
+    source: dict[str, str],
+    parameters: dict[str, int],
+    token: str,
+) -> dict[str, str]:
+    home = state_root / "home"
+    temporary = state_root / "tmp"
+    config = home / ".config"
+    cargo_home = home / ".cargo"
+    rustup_home = home / ".rustup"
+    for path in (home, temporary, config, cargo_home, rustup_home):
+        path.mkdir(parents=True, exist_ok=True)
+        path.chmod(0o700)
+
+    environment = {
+        "HOME": str(home),
+        "TMPDIR": str(temporary),
+        "XDG_CONFIG_HOME": str(config),
+        "CARGO_HOME": str(cargo_home),
+        "RUSTUP_HOME": str(rustup_home),
+        "PATH": (
+            f"{cargo_home}/bin:"
+            "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+        ),
+        "LC_ALL": "C",
+        "LANG": "C",
+        "CI": "1",
+        "GITHUB_ACTIONS": "1",
+        "GITHUB_WORKSPACE": str(ROOT),
+        "RUNNER_TEMP": str(state_root),
+        "CMUX_CI_SKIP_XCODE_SELECT": "1",
+        "CMUX_WORKLOAD_PROFILE_ID": profile["id"],
+        "CMUX_WORKLOAD_PROFILE_GENERATION": str(profile["generation"]),
+        "CMUX_WORKLOAD_ENVIRONMENT_CLASS": profile["environment_class"],
+        "CMUX_WORKLOAD_STATE_ROOT": str(state_root),
+        "CMUX_WORKLOAD_STAGE_LOG": str(state_root / ".cmux-workload-stages.jsonl"),
+        "CMUX_WORKLOAD_STAGE_TOKEN": token,
+        "CMUX_WORKLOAD_ATTEMPT_ID": str(max(1, int(token[:15], 16))),
+        "CMUX_WORKLOAD_SOURCE_COMMIT": source["commit"],
+        "CMUX_WORKLOAD_SOURCE_TREE": source["tree"],
+    }
+    for name, value in parameters.items():
+        environment[f"CMUX_WORKLOAD_PARAM_{name.upper()}"] = str(value)
+    for spec in profile["runtime_inputs"]:
+        raw = os.environ.get(spec["env"])
+        if raw:
+            environment[spec["env"]] = raw
+    return environment
+
+
 def run_profile(args: argparse.Namespace) -> int:
     registry = load_registry()
     profile = profile_by_id(registry, args.profile)
@@ -667,21 +728,14 @@ def run_profile(args: argparse.Namespace) -> int:
         pass
     token = hashlib.sha256(os.urandom(32)).hexdigest()
     inputs = runtime_inputs(profile)
-    environment = os.environ.copy()
-    environment.update(
-        {
-            "CMUX_WORKLOAD_PROFILE_ID": profile["id"],
-            "CMUX_WORKLOAD_PROFILE_GENERATION": str(profile["generation"]),
-            "CMUX_WORKLOAD_STATE_CLASS": args.state_class,
-            "CMUX_WORKLOAD_STATE_ROOT": str(state_root),
-            "CMUX_WORKLOAD_STAGE_LOG": str(stage_log),
-            "CMUX_WORKLOAD_STAGE_TOKEN": token,
-            "CMUX_WORKLOAD_SOURCE_COMMIT": source["commit"],
-            "CMUX_WORKLOAD_SOURCE_TREE": source["tree"],
-        }
+    environment = workload_environment(
+        profile,
+        state_root,
+        source,
+        parameters,
+        token,
     )
-    for name, value in parameters.items():
-        environment[f"CMUX_WORKLOAD_PARAM_{name.upper()}"] = str(value)
+    environment["CMUX_WORKLOAD_STATE_CLASS"] = args.state_class
 
     started_ms = time.time_ns() // 1_000_000
     started_monotonic = time.monotonic()
@@ -732,6 +786,7 @@ def run_profile(args: argparse.Namespace) -> int:
         "source": source,
         "profile": {"id": profile["id"], "generation": profile["generation"]},
         "semantic_validator": profile["semantic_validator"],
+        "environment_class": profile["environment_class"],
         "expected_result_class": profile["expected_result_class"],
         "result": semantic_result,
         "parameters": parameters,
@@ -792,6 +847,7 @@ def plan_profile(args: argparse.Namespace) -> int:
         "platform": profile["platform"],
         "expected_result_class": profile["expected_result_class"],
         "semantic_validator": profile["semantic_validator"],
+        "environment_class": profile["environment_class"],
         "timeout": profile["timeout"],
         "resource_class": profile["resource_class"],
         "network_class": profile["network_class"],
@@ -811,6 +867,7 @@ def validate_result_structure(value: dict[str, Any]) -> None:
             "source",
             "profile",
             "semantic_validator",
+            "environment_class",
             "expected_result_class",
             "result",
             "parameters",
@@ -927,6 +984,7 @@ def validate_result_structure(value: dict[str, Any]) -> None:
         or not isinstance(value["resource_summary"], dict)
         or not isinstance(value["semantic_validator"], str)
         or not value["semantic_validator"]
+        or value["environment_class"] not in ENVIRONMENT_CLASSES
         or not isinstance(value["expected_result_class"], str)
         or not value["expected_result_class"]
         or not isinstance(value["network_class"], str)
@@ -1018,6 +1076,7 @@ def validate_result_structure(value: dict[str, Any]) -> None:
             "id": profile["id"],
             "generation": profile["generation"],
             "semantic_validator": value["semantic_validator"],
+            "environment_class": value["environment_class"],
         },
         parameters,
         runtime_inputs,
@@ -1127,6 +1186,7 @@ def main() -> int:
                     "id": p["id"],
                     "generation": p["generation"],
                     "platform": p["platform"]["os"],
+                    "environment_class": p["environment_class"],
                     "entrypoint": p["entrypoint"],
                 }
                 for p in registry["profiles"]
