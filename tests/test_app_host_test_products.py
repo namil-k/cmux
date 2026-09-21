@@ -70,7 +70,7 @@ class TestProductHandoff(unittest.TestCase):
             self.assertTrue(Path(target["DependentProductPaths"][0]).exists())
 
     def test_numeric_locale_scheme_matches_unit_product_contract(self):
-        root = HELPER.parents[1]
+        root = HELPER.parents[2]
         schemes = root / "cmux.xcodeproj/xcshareddata/xcschemes"
 
         def signature(name):
