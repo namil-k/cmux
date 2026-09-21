@@ -127,6 +127,23 @@ class AppHostFailureRatchetTests(unittest.TestCase):
                 self.assertFalse(passed)
                 self.assertIn("hard app-host failure", message)
 
+    def test_known_assertion_cannot_hide_signal_termination(self) -> None:
+        identifier = "xctest:cmuxTests.ExampleTests/testExample"
+        known = catalog((identifier, "xctest"))
+        for signal_line in (
+            "Process terminated due to signal 11\n",
+            "*** SIGABRT received by test host\n",
+            "xctest exited with signal 6\n",
+        ):
+            with self.subTest(signal_line=signal_line):
+                passed, message = MODULE.evaluate(
+                    xctest_failure(identifier) + signal_line,
+                    exit_code=65,
+                    catalog=known,
+                )
+                self.assertFalse(passed)
+                self.assertIn("hard app-host failure", message)
+
     def test_known_xctest_failure_cannot_hide_unparsed_second_failure(self) -> None:
         identifier = "xctest:cmuxTests.ExampleTests/testKnown"
         output = xctest_failure(identifier).replace(
