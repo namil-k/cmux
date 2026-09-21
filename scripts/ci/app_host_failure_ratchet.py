@@ -203,6 +203,11 @@ def evaluate(output: str, *, exit_code: int, catalog: dict[str, Any]) -> tuple[b
 
     if not ids:
         return False, "test summaries failed but no typed test identifier was parsed"
+    if exit_code != 65:
+        return False, (
+            "failed test summaries may be catalogued only for xcodebuild status 65; "
+            f"got {exit_code}"
+        )
 
     accounted, accounting_message = failure_accounting(output)
     if not accounted:
