@@ -144,6 +144,20 @@ class AppHostFailureRatchetTests(unittest.TestCase):
                 self.assertFalse(passed)
                 self.assertIn("hard app-host failure", message)
 
+    def test_trailing_zero_xctest_summary_does_not_erase_aggregate_failure(self) -> None:
+        identifier = "xctest:cmuxTests.ExampleTests/testKnown"
+        output = (
+            xctest_failure(identifier)
+            + "Executed 0 tests, with 0 failures (0 unexpected)\n"
+        )
+        passed, message = MODULE.evaluate(
+            output,
+            exit_code=65,
+            catalog=catalog((identifier, "xctest")),
+        )
+        self.assertTrue(passed)
+        self.assertIn(identifier, message)
+
     def test_known_xctest_failure_cannot_hide_unparsed_second_failure(self) -> None:
         identifier = "xctest:cmuxTests.ExampleTests/testKnown"
         output = xctest_failure(identifier).replace(
