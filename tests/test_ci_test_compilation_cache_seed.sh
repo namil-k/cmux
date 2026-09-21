@@ -162,7 +162,6 @@ run_script build "$TMP_DIR/derived" "$TMP_DIR/packages" "$TMP_DIR/cas" "$TMP_DIR
 for expected in \
   cmux \
   cmux-unit \
-  cmux-numeric-locale \
   build-for-testing \
   COMPILATION_CACHE_ENABLE_CACHING=YES \
   "COMPILATION_CACHE_CAS_PATH=$TMP_DIR/cas" \
@@ -173,8 +172,65 @@ for expected in \
     exit 1
   fi
 done
-if [ "$(grep -c '^---$' "$STUB_XCODEBUILD_ARGS")" -ne 3 ] || [ ! -d "$TMP_DIR/cas" ]; then
-  echo "FAIL: the build must run all three schemes against an existing CAS directory"
+if [ "$(grep -c '^---  exit 1
+fi
+# `build` compiles no test files: the cmux-unit scheme marks cmuxTests
+# buildForRunning=NO.
+if grep -Fxq -- build "$STUB_XCODEBUILD_ARGS"; then
+  echo "FAIL: the app-host test product must be compiled with build-for-testing, not build"
+  exit 1
+fi
+if grep -Fxq -- cmux-numeric-locale "$STUB_XCODEBUILD_ARGS"; then
+  echo "FAIL: numeric locale must reuse the cmux-unit xctestrun instead of compiling a third scheme"
+  exit 1
+fi
+echo "PASS: the build compiles two shared schemes for testing with the compilation cache on"
+if ! grep -Fxq 'build output for cmux' "$TMP_DIR/derived/cmux-build.log" \
+  || grep -Fq 'build output for cmux-unit' "$TMP_DIR/derived/cmux-build.log"; then
+  echo "FAIL: the warning-budget log must retain only app/UI build output"
+  exit 1
+fi
+echo "PASS: app/UI warnings are captured separately from unit-test warnings"
+
+
+# A restored package cache can make resolution succeed without the binary
+# artifacts, and the build cannot resolve again.
+: > "$STUB_RESOLVE_ATTEMPTS"
+mkdir -p "$TMP_DIR/stale-packages/checkouts"
+if ! STUB_RESOLVE_ARTIFACTS_FROM=2 run_script resolve "$TMP_DIR/derived" "$TMP_DIR/stale-packages" >/dev/null 2>&1 \
+  || [ "$(wc -l < "$STUB_RESOLVE_ATTEMPTS")" -ne 2 ] \
+  || [ -d "$TMP_DIR/stale-packages/checkouts" ]; then
+  echo "FAIL: resolve must clear the package cache and retry when the binary artifacts are missing"
+  exit 1
+fi
+: > "$STUB_RESOLVE_ATTEMPTS"
+if ! STUB_RESOLVE_FAILS_UNTIL=1 STUB_RESOLVE_ARTIFACTS_FROM=2 run_script resolve "$TMP_DIR/derived" "$TMP_DIR/failed-packages" >/dev/null 2>&1 \
+  || [ "$(wc -l < "$STUB_RESOLVE_ATTEMPTS")" -ne 2 ] \
+  || [ -d "$TMP_DIR/failed-packages/checkouts/partial-clone" ]; then
+  echo "FAIL: resolve must clear the partial clone a failed attempt leaves and retry"
+  exit 1
+fi
+: > "$STUB_RESOLVE_ATTEMPTS"
+if STUB_RESOLVE_ARTIFACTS_FROM=9 run_script resolve "$TMP_DIR/derived" "$TMP_DIR/never-packages" >/dev/null 2>&1 \
+  || [ "$(wc -l < "$STUB_RESOLVE_ATTEMPTS")" -ne 3 ]; then
+  echo "FAIL: resolve must fail after three attempts without the binary artifacts"
+  exit 1
+fi
+for name_and_body in "macos-compile-admission:$ADMISSION" "refresh-test-compilation-cache:$SEEDER"; do
+  if ! grep -Fq 'scripts/ci/compile-app-host-test-product.sh resolve' <<<"${name_and_body#*:}"; then
+    echo "FAIL: the ${name_and_body%%:*} job must resolve packages through scripts/ci/compile-app-host-test-product.sh"
+    exit 1
+  fi
+done
+echo "PASS: resolve retries until the binary artifacts exist, in both jobs"
+
+if run_script bogus >/dev/null 2>&1 || run_script build only-one-arg >/dev/null 2>&1; then
+  echo "FAIL: the script must reject unknown commands and short argument lists"
+  exit 1
+fi
+echo "PASS: the script rejects bad usage"
+ "$STUB_XCODEBUILD_ARGS")" -ne 2 ] || [ ! -d "$TMP_DIR/cas" ]; then
+  echo "FAIL: the build must run the app/UI and unit schemes against an existing CAS directory"
   exit 1
 fi
 # `build` compiles no test files: the cmux-unit scheme marks cmuxTests
