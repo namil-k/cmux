@@ -391,6 +391,65 @@ def focused_steps_in_ci_workflow() -> tuple[set[str], set[str], dict[str, str]]:
     return whole, partial, env
 
 
+def check_truthful_broad_suites_leave_focused_gates() -> int:
+    """Suites protected by strict broad accounting should run in the timed batch."""
+    import importlib.util
+
+    folded = {
+        "AgentChatFallbackTranscriptResolutionCoordinatorTests",
+        "AgentChatSessionRegistryLifecycleReviewRegressionTests",
+        "AgentRestoreLiveOwnerAdmissionTests",
+        "BackgroundPrimeStartableSurfaceTests",
+        "BrowserSystemProxyMirrorTests",
+        "BrowserViewportRuntimeTests",
+        "CLISSHSessionAttachAnchorTests",
+        "CLISendQueuedOutputTests",
+        "ClaudeHookLifecycleCleanupTests",
+        "ClaudeHookLiveDeliveryTargetTests",
+        "ClaudeHookPIDAuthenticationTests",
+        "CloudNotificationDismissParityTests",
+        "CloudWorkspaceRenameSurfaceParityTests",
+        "CmuxBundledBinPathIntegrationTests",
+        "DockNotificationAttentionTests",
+        "GhosttyOptionAsAltModsTests",
+        "HostSettingsShortcutNotificationTests",
+        "LiveAgentIndexRelevantChurnTests",
+        "MainWindowZoomPlacementTests",
+        "NotificationRowSnapshotBoundaryTests",
+        "NotificationScrollRestoreLifecycleTests",
+        "NotificationScrollRestoreRecoveryTests",
+        "PhonePushPresenceGateTests",
+        "RestoreAdmissionRetryPolicyTests",
+        "RestoredAgentShellActivityLivenessTests",
+        "SurfaceResumeAgentHookDowngradeTests",
+    }
+    spec = importlib.util.spec_from_file_location("cmux_unit_test_shard_folded", HELPER)
+    assert spec is not None and spec.loader is not None
+    helper = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = helper
+    spec.loader.exec_module(helper)
+
+    focused = {selector.split("/", 1)[1] for selector in helper.FOCUSED_GATE_SELECTORS}
+    whole, _, _ = focused_steps_in_ci_workflow()
+    stale = sorted(folded & (focused | whole))
+    if stale:
+        print(f"FAIL: truthful broad suites still have dedicated focused ownership: {stale}")
+        return 1
+
+    discovered = {
+        selector.identifier.split("/", 2)[1]
+        for selector in helper.discover_selectors(ROOT)
+        if selector.identifier.startswith("cmuxTests/")
+    }
+    missing = sorted(folded - discovered)
+    if missing:
+        print(f"FAIL: folded suites are absent from broad shard discovery: {missing}")
+        return 1
+
+    print("PASS: truthful broad suites are discovered and owned by the measured shard batch")
+    return 0
+
+
 def check_focused_gates_run_once() -> int:
     import importlib.util
     import re
@@ -518,12 +577,7 @@ def main() -> int:
             shard_selectors = output.read_text(encoding="utf-8").splitlines()
             repo_assigned_selectors.extend(shard_selectors)
             for focused_selector in (
-                "-only-testing:cmuxTests/AgentRestoreLiveOwnerAdmissionTests",
-                "-only-testing:cmuxTests/BrowserSystemProxyMirrorTests",
-                "-only-testing:cmuxTests/CLISSHSessionAttachAnchorTests",
-                "-only-testing:cmuxTests/CloudNotificationDismissParityTests",
                 "-only-testing:cmuxTests/GhosttyTerminalViewVisibilityPolicyTests",
-                "-only-testing:cmuxTests/GhosttyOptionAsAltModsTests",
                 "-only-testing:cmuxTests/GlobalSearchShortcutBehaviorTests",
                 "-only-testing:cmuxTests/KeyboardShortcutSettingsFileStoreNoOpPersistenceTests",
                 "-only-testing:cmuxTests/RemoteTmuxMirrorLayoutIdentityTests",
@@ -583,6 +637,9 @@ def main() -> int:
         return rc
 
     if (rc := check_reserved_workers_get_less_of_the_batch()) != 0:
+        return rc
+
+    if (rc := check_truthful_broad_suites_leave_focused_gates()) != 0:
         return rc
 
     if (rc := check_focused_gates_run_once()) != 0:
