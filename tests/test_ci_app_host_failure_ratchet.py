@@ -133,9 +133,8 @@ class AppHostFailureRatchetTests(unittest.TestCase):
         name = "knownThing()"
         identifier = f"swift:{name}"
         output = swift_failure(name).replace(
-            "with 1 issue.\n",
-            "with 2 issues.\n",
-            1,
+            "✘ Test run with 9 tests failed after 1.0 seconds with 1 issue.",
+            "✘ Test run with 9 tests failed after 1.0 seconds with 2 issues.",
         )
         passed, message = MODULE.evaluate(
             output,
