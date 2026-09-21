@@ -11,7 +11,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-SCHEMES = {"cmux": "CMUX_UI_XCTESTRUN", "cmux-unit": "CMUX_APP_HOST_XCTESTRUN", "cmux-numeric-locale": "CMUX_NUMERIC_LOCALE_XCTESTRUN"}
+SCHEMES = {"cmux": "CMUX_UI_XCTESTRUN", "cmux-unit": "CMUX_APP_HOST_XCTESTRUN"}
 RECEIPT = "cmux-test-products.json"
 
 
@@ -107,6 +107,10 @@ def restore(derived: Path, current: dict[str, str]) -> dict[str, str]:
         validate_manifest(value, products)
         manifest.write_bytes(plistlib.dumps(value))
         outputs[SCHEMES[scheme]] = str(manifest.resolve())
+    # The numeric-locale gate selects only GhosttyNumericLocaleTests and
+    # disables parallel testing at invocation time. Its scheme has the same
+    # app/test product contract as cmux-unit; tests lock that equivalence.
+    outputs["CMUX_NUMERIC_LOCALE_XCTESTRUN"] = outputs["CMUX_APP_HOST_XCTESTRUN"]
     return outputs
 
 
