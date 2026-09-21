@@ -62,6 +62,11 @@ class AppHostFailureRatchetTests(unittest.TestCase):
         self.assertTrue(passed)
         self.assertIn(identifier, message)
 
+    def test_swift_run_summary_is_never_a_failure_identifier(self) -> None:
+        name = "parameterizedThing(value: 3)"
+        ids = MODULE.failure_ids(swift_failure(name))
+        self.assertEqual(ids, {f"swift:{name}"})
+
     def test_new_xctest_failure_blocks(self) -> None:
         identifier = "xctest:cmuxTests.ExampleTests/testNew"
         passed, message = MODULE.evaluate(
