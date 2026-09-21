@@ -114,6 +114,53 @@ class AppHostFailureRatchetTests(unittest.TestCase):
                 self.assertFalse(passed)
                 self.assertIn("hard app-host failure", message)
 
+    def test_known_xctest_failure_cannot_hide_unparsed_second_failure(self) -> None:
+        identifier = "xctest:cmuxTests.ExampleTests/testKnown"
+        output = xctest_failure(identifier).replace(
+            "Executed 7 tests, with 1 failure (0 unexpected)",
+            "Executed 7 tests, with 2 failures (0 unexpected)",
+        )
+        passed, message = MODULE.evaluate(
+            output,
+            exit_code=65,
+            catalog=catalog((identifier, "xctest")),
+        )
+        self.assertFalse(passed)
+        self.assertIn("unparsed app-host failure evidence", message)
+        self.assertIn("2 failure(s)", message)
+
+    def test_known_swift_failure_cannot_hide_unparsed_second_issue(self) -> None:
+        name = "knownThing()"
+        identifier = f"swift:{name}"
+        output = swift_failure(name).replace(
+            "with 1 issue.\n",
+            "with 2 issues.\n",
+            1,
+        )
+        passed, message = MODULE.evaluate(
+            output,
+            exit_code=65,
+            catalog=catalog((identifier, "swift-testing")),
+        )
+        self.assertFalse(passed)
+        self.assertIn("unparsed app-host failure evidence", message)
+        self.assertIn("2 issue(s)", message)
+
+    def test_failed_swift_summary_without_issue_count_blocks(self) -> None:
+        name = "knownThing()"
+        identifier = f"swift:{name}"
+        output = swift_failure(name).replace(
+            "✘ Test run with 9 tests failed after 1.0 seconds with 1 issue.",
+            "✘ Test run with 9 tests failed after 1.0 seconds.",
+        )
+        passed, message = MODULE.evaluate(
+            output,
+            exit_code=65,
+            catalog=catalog((identifier, "swift-testing")),
+        )
+        self.assertFalse(passed)
+        self.assertIn("omitted its issue count", message)
+
     def test_failed_summary_without_identifier_blocks(self) -> None:
         passed, message = MODULE.evaluate(
             "Executed 2 tests, with 1 failure (0 unexpected)\n",
