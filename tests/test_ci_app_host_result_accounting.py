@@ -150,6 +150,24 @@ def test_catalog_may_only_shrink() -> None:
     assert not set(old).issubset(new)
 
 
+def test_nonempty_catalog_requires_exact_bootstrap_main_sha() -> None:
+    data = {
+        "bootstrap_main_sha": None,
+        "version": 1,
+        "tests": {
+            "FooTests/testOne()": {
+                "classification": "unknown",
+            }
+        },
+    }
+    try:
+        accounting.validate_catalog(data)
+    except ValueError as error:
+        assert "bootstrap_main_sha" in str(error)
+    else:
+        raise AssertionError("non-empty catalog without exact main SHA was accepted")
+
+
 def test_catalog_requires_campaign_classification() -> None:
     data = {
         "bootstrap_main_sha": "0123456789abcdef0123456789abcdef01234567",
