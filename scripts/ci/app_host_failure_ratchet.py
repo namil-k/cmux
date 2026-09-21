@@ -43,6 +43,16 @@ HOST_FAILURE_RE = re.compile(
     r"Idle timed out|Post-test timed out)",
     re.IGNORECASE,
 )
+HOST_SIGNAL_RE = re.compile(
+    r"(?:\*\*\*[^\n]*\bSignal\s+\d+\b|"
+    r"(?:received|terminated|killed|stopped|crashed|aborted|exited)[^\n]*"
+    r"\bsignal\s+\d+\b|^\s*signal\s+\d+\b|"
+    r"(?:\*\*\*[^\n]*|(?:received|terminated|killed|stopped|crashed)[^\n]*)"
+    r"\bSIG(?:ABRT|ALRM|BUS|CHLD|CONT|FPE|HUP|ILL|INT|IO|IOT|KILL|PIPE|POLL|"
+    r"PROF|QUIT|SEGV|STOP|SYS|TERM|TRAP|TSTP|TTIN|TTOU|URG|USR1|USR2|"
+    r"VTALRM|XCPU|XFSZ)\b)",
+    re.IGNORECASE | re.MULTILINE,
+)
 
 CATEGORIES = {
     "product bug",
@@ -182,7 +192,7 @@ def evaluate(output: str, *, exit_code: int, catalog: dict[str, Any]) -> tuple[b
     output = clean(output)
     if INCOMPLETE_RE.search(output):
         return False, "hard app-host failure: crash/timeout/incomplete execution cannot be catalogued"
-    if HOST_FAILURE_RE.search(output):
+    if HOST_FAILURE_RE.search(output) or HOST_SIGNAL_RE.search(output):
         return False, "hard app-host failure: runner/host failure cannot be catalogued"
 
     xctest = list(XCTEST_SUMMARY_RE.finditer(output))
