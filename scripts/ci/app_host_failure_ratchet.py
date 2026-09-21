@@ -201,12 +201,12 @@ def evaluate(output: str, *, exit_code: int, catalog: dict[str, Any]) -> tuple[b
             return False, f"xcodebuild exited {exit_code} after otherwise passing summaries"
         return True, f"clean app-host run: {executed} summarized test executions"
 
+    if not ids:
+        return False, "test summaries failed but no typed test identifier was parsed"
+
     accounted, accounting_message = failure_accounting(output)
     if not accounted:
         return False, "unparsed app-host failure evidence: " + accounting_message
-
-    if not ids:
-        return False, "test summaries failed but no typed test identifier was parsed"
 
     unknown = sorted(ids - known_ids(catalog))
     if unknown:
