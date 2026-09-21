@@ -6,6 +6,7 @@ import plistlib
 import shutil
 import tempfile
 import unittest
+import xml.etree.ElementTree as ET
 from pathlib import Path
 
 HELPER = Path(__file__).resolve().parents[1] / "scripts/ci/app_host_test_products.py"
@@ -29,7 +30,7 @@ class TestProductHandoff(unittest.TestCase):
         executable = products / "Debug/cmux DEV.app/Contents/MacOS/cmux DEV"
         executable.parent.mkdir(parents=True)
         executable.write_text("binary")
-        for scheme in ("cmux", "cmux-unit", "cmux-numeric-locale"):
+        for scheme in ("cmux", "cmux-unit"):
             target = {
                 "TestHostPath": "__TESTROOT__/Debug/cmux DEV.app",
                 "TestBundlePath": "__TESTHOST__/Contents/PlugIns/cmuxTests.xctest",
@@ -59,6 +60,7 @@ class TestProductHandoff(unittest.TestCase):
         current = {**self.identity, "checkout": "/consumer/work/cmux", "developer": "/consumer/Xcode.app/Contents/Developer"}
         outputs = module.restore(self.consumer, current)
         self.assertEqual(set(outputs), {"CMUX_APP_HOST_XCTESTRUN", "CMUX_NUMERIC_LOCALE_XCTESTRUN", "CMUX_UI_XCTESTRUN"})
+        self.assertEqual(outputs["CMUX_NUMERIC_LOCALE_XCTESTRUN"], outputs["CMUX_APP_HOST_XCTESTRUN"])
         for path in outputs.values():
             value = plistlib.loads(Path(path).read_bytes())
             target = list(module.targets(value))[0]
@@ -66,6 +68,52 @@ class TestProductHandoff(unittest.TestCase):
             bundle = self.ui_bundle if "UITargetAppPath" in target else self.bundle
             self.assertEqual(target["DependentProductPaths"], [str(self.consumer / "Build/Products" / bundle)])
             self.assertTrue(Path(target["DependentProductPaths"][0]).exists())
+
+    def test_numeric_locale_scheme_matches_unit_product_contract(self):
+        root = HELPER.parents[1]
+        schemes = root / "cmux.xcodeproj/xcshareddata/xcschemes"
+
+        def signature(name):
+            tree = ET.parse(schemes / f"{name}.xcscheme")
+            scheme = tree.getroot()
+            buildables = [
+                tuple(reference.attrib.get(key) for key in ("BlueprintIdentifier", "BuildableName", "BlueprintName", "ReferencedContainer"))
+                for reference in scheme.findall("./BuildAction/BuildActionEntries/BuildActionEntry/BuildableReference")
+            ]
+            test = scheme.find("./TestAction")
+            self.assertIsNotNone(test)
+            testable = test.find("./Testables/TestableReference")
+            self.assertIsNotNone(testable)
+            testable_reference = testable.find("./BuildableReference")
+            self.assertIsNotNone(testable_reference)
+            macro = test.find("./MacroExpansion/BuildableReference")
+            self.assertIsNotNone(macro)
+            env = sorted(
+                (item.attrib.get("key"), item.attrib.get("value"), item.attrib.get("isEnabled"))
+                for item in test.findall("./EnvironmentVariables/EnvironmentVariable")
+            )
+            return {
+                "buildables": buildables,
+                "test_action": tuple(
+                    test.attrib.get(key)
+                    for key in ("buildConfiguration", "selectedDebuggerIdentifier", "selectedLauncherIdentifier", "shouldUseLaunchSchemeArgsEnv")
+                ),
+                "testable": (
+                    testable.attrib.get("skipped"),
+                    testable.attrib.get("parallelizable"),
+                    tuple(
+                        testable_reference.attrib.get(key)
+                        for key in ("BlueprintIdentifier", "BuildableName", "BlueprintName", "ReferencedContainer")
+                    ),
+                ),
+                "macro": tuple(
+                    macro.attrib.get(key)
+                    for key in ("BlueprintIdentifier", "BuildableName", "BlueprintName", "ReferencedContainer")
+                ),
+                "environment": env,
+            }
+
+        self.assertEqual(signature("cmux-unit"), signature("cmux-numeric-locale"))
 
     def test_rejects_mismatched_source_toolchain_or_architecture(self):
         self.transfer()
