@@ -152,6 +152,7 @@ def test_catalog_may_only_shrink() -> None:
 
 def test_catalog_requires_campaign_classification() -> None:
     data = {
+        "bootstrap_main_sha": "0123456789abcdef0123456789abcdef01234567",
         "version": 1,
         "tests": {
             "FooTests/testOne()": {
