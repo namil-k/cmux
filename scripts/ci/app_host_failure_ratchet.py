@@ -119,15 +119,19 @@ def failure_accounting(output: str) -> tuple[bool, str]:
             swift_issue_records += 1
 
     if xctest_summaries:
-        # XCTest emits nested suite summaries; the final summary is the
-        # Selected-tests aggregate for this complete invocation. Its failure
-        # count is assertion records, so require one attributable error record
-        # per failure before any catalog can normalize the run.
-        final_xctest_failures = int(xctest_summaries[-1].group("failures"))
-        if final_xctest_failures != xctest_failure_records:
+        # XCTest emits nested suite summaries and can append a later zero-test
+        # summary after the real aggregate in mixed XCTest/Swift Testing runs.
+        # The strongest failure count is the conservative aggregate candidate:
+        # when a complete aggregate exists it dominates nested summaries, while
+        # missing aggregate evidence still leaves the parsed record count larger
+        # and fails closed.
+        reported_xctest_failures = max(
+            int(match.group("failures")) for match in xctest_summaries
+        )
+        if reported_xctest_failures != xctest_failure_records:
             return False, (
-                "XCTest final summary reports "
-                f"{final_xctest_failures} failure(s), but "
+                "XCTest summaries report at most "
+                f"{reported_xctest_failures} failure(s), but "
                 f"{xctest_failure_records} attributable failure record(s) were parsed"
             )
 
