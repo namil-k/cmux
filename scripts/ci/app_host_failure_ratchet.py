@@ -10,7 +10,7 @@ import re
 import subprocess
 import sys
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 ANSI_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
 XCTEST_SUMMARY_RE = re.compile(
@@ -157,7 +157,7 @@ def evaluate(output: str, *, exit_code: int, catalog: dict[str, Any]) -> tuple[b
     return True, "known current-main failure(s) only: " + ", ".join(sorted(ids))
 
 
-def catalog_from_git(ref: str, path: str) -> dict[str, Any] | None:
+def catalog_from_git(ref: str, path: str) -> Optional[dict[str, Any]]:
     proc = subprocess.run(
         ["git", "show", f"{ref}:{path}"],
         text=True,
@@ -171,7 +171,7 @@ def catalog_from_git(ref: str, path: str) -> dict[str, Any] | None:
 
 def check_shrink_only(
     current: dict[str, Any],
-    base: dict[str, Any] | None,
+    base: Optional[dict[str, Any]],
     *,
     base_ref: str,
 ) -> tuple[bool, str]:
