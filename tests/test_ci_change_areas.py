@@ -1634,6 +1634,23 @@ def test_app_host_failures_preserve_attempt_and_crash_diagnostics() -> None:
     assert "if: ${{ failure() }}" in app_host
 
 
+
+def test_app_host_ratchet_uses_built_inventory_and_typed_results() -> None:
+    app_host = workflow_job_block("app-host-unit-tests")
+    guards = (ROOT / ".github/workflows/ci-guards.yml").read_text(encoding="utf-8")
+
+    assert "- name: Enumerate built app-host tests" in app_host
+    assert "-enumerate-tests" in app_host
+    assert "-test-enumeration-format json" in app_host
+    assert "app_host_result_accounting.py inventory" in app_host
+    assert "app_host_result_accounting.py check-run" in app_host
+    assert "app-host-known-failures.json" in app_host
+    assert 'RATCHET_NEW_FAILURE' in (
+        ROOT / "scripts/ci/app_host_result_accounting.py"
+    ).read_text(encoding="utf-8")
+    assert "catalog-diff" in guards
+    assert "tests/test_ci_app_host_result_accounting.py" in guards
+
 def test_linux_preflight_blocks_macos_on_cheap_layer_failure() -> None:
     block = workflow_job_block("linux-preflight")
 
