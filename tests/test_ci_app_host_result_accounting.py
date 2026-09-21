@@ -16,21 +16,56 @@ def test_enumeration_uses_built_bundle_identifiers() -> None:
     data = {
         "values": [
             {
+                "name": "Test Plan",
                 "children": [
                     {
-                        "identifier": "cmuxTests/FooTests",
+                        "name": "cmuxTests",
                         "children": [
-                            {"identifier": "cmuxTests/FooTests/testOne()"},
-                            {"identifier": "cmuxTests/FooTests/testTwo()"},
+                            {
+                                "name": "FooTests",
+                                "children": [
+                                    {"name": "testOne()"},
+                                    {"name": "testTwo()"},
+                                ],
+                            },
+                            {
+                                "name": "Swift Display Suite",
+                                "children": [
+                                    {
+                                        "name": "nested suite",
+                                        "children": [
+                                            {"name": "modern test"},
+                                        ],
+                                    }
+                                ],
+                            },
                         ],
                     }
-                ]
+                ],
             }
         ]
     }
     assert accounting.parse_enumeration(data) == {
         "FooTests/testOne()",
         "FooTests/testTwo()",
+        "Swift Display Suite/nested suite/modern test",
+    }
+
+
+def test_enumeration_accepts_explicit_flat_identifiers() -> None:
+    data = {
+        "values": [
+            {
+                "children": [
+                    {"identifier": "cmuxTests/FooTests/testOne()"},
+                    {"identifier": "cmuxTests/ModernSuite/modern test"},
+                ]
+            }
+        ]
+    }
+    assert accounting.parse_enumeration(data) == {
+        "FooTests/testOne()",
+        "ModernSuite/modern test",
     }
 
 
