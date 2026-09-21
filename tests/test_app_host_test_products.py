@@ -76,16 +76,45 @@ class TestProductHandoff(unittest.TestCase):
         def signature(name):
             tree = ET.parse(schemes / f"{name}.xcscheme")
             scheme = tree.getroot()
-            buildables = [
-                tuple(reference.attrib.get(key) for key in ("BlueprintIdentifier", "BuildableName", "BlueprintName", "ReferencedContainer"))
-                for reference in scheme.findall("./BuildAction/BuildActionEntries/BuildActionEntry/BuildableReference")
-            ]
+            buildables = []
+            for entry in scheme.findall("./BuildAction/BuildActionEntries/BuildActionEntry"):
+                reference = entry.find("./BuildableReference")
+                self.assertIsNotNone(reference)
+                buildables.append(
+                    {
+                        "attributes": tuple(sorted(entry.attrib.items())),
+                        "reference": tuple(
+                            reference.attrib.get(key)
+                            for key in (
+                                "BlueprintIdentifier",
+                                "BuildableName",
+                                "BlueprintName",
+                                "ReferencedContainer",
+                            )
+                        ),
+                    }
+                )
             test = scheme.find("./TestAction")
             self.assertIsNotNone(test)
-            testable = test.find("./Testables/TestableReference")
-            self.assertIsNotNone(testable)
-            testable_reference = testable.find("./BuildableReference")
-            self.assertIsNotNone(testable_reference)
+            testables = []
+            for testable in test.findall("./Testables/TestableReference"):
+                reference = testable.find("./BuildableReference")
+                self.assertIsNotNone(reference)
+                testables.append(
+                    {
+                        "attributes": tuple(sorted(testable.attrib.items())),
+                        "reference": tuple(
+                            reference.attrib.get(key)
+                            for key in (
+                                "BlueprintIdentifier",
+                                "BuildableName",
+                                "BlueprintName",
+                                "ReferencedContainer",
+                            )
+                        ),
+                    }
+                )
+            self.assertTrue(testables)
             macro = test.find("./MacroExpansion/BuildableReference")
             self.assertIsNotNone(macro)
             env = sorted(
@@ -98,14 +127,7 @@ class TestProductHandoff(unittest.TestCase):
                     test.attrib.get(key)
                     for key in ("buildConfiguration", "selectedDebuggerIdentifier", "selectedLauncherIdentifier", "shouldUseLaunchSchemeArgsEnv")
                 ),
-                "testable": (
-                    testable.attrib.get("skipped"),
-                    testable.attrib.get("parallelizable"),
-                    tuple(
-                        testable_reference.attrib.get(key)
-                        for key in ("BlueprintIdentifier", "BuildableName", "BlueprintName", "ReferencedContainer")
-                    ),
-                ),
+                "testables": testables,
                 "macro": tuple(
                     macro.attrib.get(key)
                     for key in ("BlueprintIdentifier", "BuildableName", "BlueprintName", "ReferencedContainer")
