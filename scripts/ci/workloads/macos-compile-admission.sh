@@ -14,6 +14,7 @@ stage() {
 
 cd "$root"
 mkdir -p "$state" "$source_packages" "$cas"
+export PATH="$HOME/.cargo/bin:$PATH"
 
 stage start setup
 export CMUX_CI_REQUIRED_MACOS_SDK_MAJOR="${CMUX_CI_REQUIRED_MACOS_SDK_MAJOR:-26}"
