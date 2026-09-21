@@ -59,6 +59,11 @@ def clean(output: str) -> str:
     return ANSI_RE.sub("", output)
 
 
+def swift_test_name(value: str) -> str:
+    """Match the census identifier normalization for Swift Testing display names."""
+    return value.strip().strip('"')
+
+
 def failure_ids(output: str) -> set[str]:
     ids: set[str] = set()
     for line in io.StringIO(clean(output)):
@@ -75,7 +80,7 @@ def failure_ids(output: str) -> set[str]:
             continue
         match = SWIFT_ISSUE_RE.search(line) or SWIFT_FAILED_RE.search(line)
         if match:
-            ids.add(f"swift:{match.group('test').strip()}")
+            ids.add(f"swift:{swift_test_name(match.group('test'))}")
     return ids
 
 
