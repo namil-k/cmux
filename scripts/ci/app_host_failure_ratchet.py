@@ -79,6 +79,55 @@ def failure_ids(output: str) -> set[str]:
     return ids
 
 
+def failure_accounting(output: str) -> tuple[bool, str]:
+    """Prove every failed-summary unit has matching per-test failure evidence."""
+    xctest_summaries = []
+    xctest_failure_records = 0
+    swift_failed_summaries: list[tuple[str, int]] = []
+    swift_issue_records = 0
+
+    for raw_line in io.StringIO(clean(output)):
+        if "known issue" in raw_line.lower():
+            continue
+        if match := XCTEST_SUMMARY_RE.search(raw_line):
+            xctest_summaries.append(match)
+        if XCTEST_ERROR_RE.search(raw_line):
+            xctest_failure_records += 1
+        if match := SWIFT_SUMMARY_RE.search(raw_line):
+            if match.group("result") == "failed":
+                issue_match = re.search(r"\bwith\s+(\d+)\s+issues?\b", raw_line)
+                if issue_match is None:
+                    return False, "Swift Testing failed summary omitted its issue count"
+                swift_failed_summaries.append((raw_line.strip(), int(issue_match.group(1))))
+            continue
+        if SWIFT_ISSUE_RE.search(raw_line):
+            swift_issue_records += 1
+
+    if xctest_summaries:
+        # XCTest emits nested suite summaries; the final summary is the
+        # Selected-tests aggregate for this complete invocation. Its failure
+        # count is assertion records, so require one attributable error record
+        # per failure before any catalog can normalize the run.
+        final_xctest_failures = int(xctest_summaries[-1].group("failures"))
+        if final_xctest_failures != xctest_failure_records:
+            return False, (
+                "XCTest final summary reports "
+                f"{final_xctest_failures} failure(s), but "
+                f"{xctest_failure_records} attributable failure record(s) were parsed"
+            )
+
+    if swift_failed_summaries:
+        expected_issues = sum(count for _, count in swift_failed_summaries)
+        if expected_issues != swift_issue_records:
+            return False, (
+                "Swift Testing failed summary reports "
+                f"{expected_issues} issue(s), but "
+                f"{swift_issue_records} attributable issue record(s) were parsed"
+            )
+
+    return True, "all failed-summary evidence has attributable test records"
+
+
 def load_catalog_data(value: Any) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise ValueError("catalog root must be an object")
@@ -151,6 +200,10 @@ def evaluate(output: str, *, exit_code: int, catalog: dict[str, Any]) -> tuple[b
         if exit_code != 0:
             return False, f"xcodebuild exited {exit_code} after otherwise passing summaries"
         return True, f"clean app-host run: {executed} summarized test executions"
+
+    accounted, accounting_message = failure_accounting(output)
+    if not accounted:
+        return False, "unparsed app-host failure evidence: " + accounting_message
 
     if not ids:
         return False, "test summaries failed but no typed test identifier was parsed"
