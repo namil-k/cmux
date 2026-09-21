@@ -839,7 +839,7 @@ jobs:
             -enumerate-tests \
             -xctestrun "$CMUX_APP_HOST_XCTESTRUN" \
             -destination "platform=macOS" \
-            -test-enumeration-style flat \
+            -test-enumeration-style hierarchical \
             -test-enumeration-format json \
             -test-enumeration-output-path "$enumeration_json"
           test -s "$enumeration_json"
