@@ -2234,6 +2234,33 @@ jobs:
           CMUX_CLI_BIN="$CLI_BIN" python3 tests/test_omp_subagent_lifecycle.py
           CMUX_CLI_BIN="$CLI_BIN" python3 tests/test_campfire_extension_install.py
 
+      - name: Run SSH fish foreground-auth hang regression
+        if: ${{ !cancelled() && matrix.shard == fromJSON(env.CMUX_APP_HOST_CLI_REGRESSION_SHARD) }}
+        timeout-minutes: 6
+        env:
+          CMUX_APP_HOST_XCODEBUILD_ATTEMPTS: "1"
+        run: |
+          set -euo pipefail
+          if ! command -v fish >/dev/null 2>&1; then
+            HOMEBREW_NO_AUTO_UPDATE=1 brew install fish
+          fi
+          command -v fish >/dev/null 2>&1
+          test_log="$RUNNER_TEMP/cmux-ssh-fish-hang-regression.txt"
+          scripts/ci/run-in-console-session.sh \
+            scripts/ci/run-app-host-xcodebuild.sh \
+            -xctestrun "$CMUX_APP_HOST_XCTESTRUN" \
+            -destination "platform=macOS" \
+            -only-testing:cmuxTests/WorkspaceSSHFishShellTests \
+            -test-timeouts-enabled YES \
+            -default-test-execution-time-allowance 180 \
+            -maximum-test-execution-time-allowance 180 \
+            CMUX_SKIP_ZIG_BUILD=1 \
+            test-without-building 2>&1 | tee "$test_log"
+          if ! grep -Eq "Executed [1-9][0-9]* tests?" "$test_log"; then
+            echo "SSH/fish isolation gate executed no XCTest cases" >&2
+            exit 1
+          fi
+
       - name: Clean up isolated app-host home
         if: ${{ always() }}
         env:

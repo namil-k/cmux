@@ -98,6 +98,7 @@ FOCUSED_GATE_SELECTORS = {
     "cmuxTests/SocketACLReloadRegressionTests",
     "cmuxTests/SurfaceMachineIDDeviceEncodingTests",
     "cmuxTests/SurfaceResumeAgentHookDowngradeTests",
+    "cmuxTests/WorkspaceSSHFishShellTests",
 
 }
 # BrowserDeveloperToolsVisibilityPersistenceTests reliably crash-restarts the

@@ -437,6 +437,60 @@ def check_focused_gates_run_once() -> int:
     return 0
 
 
+def check_known_ssh_hang_isolated_after_batch() -> int:
+    """Keep the unresolved SSH/fish runner hang out of ordinary broad batches."""
+    import importlib.util
+    import re
+
+    spec = importlib.util.spec_from_file_location("cmux_unit_test_shard_hang", HELPER)
+    assert spec is not None and spec.loader is not None
+    helper = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = helper
+    spec.loader.exec_module(helper)
+
+    selector = "cmuxTests/WorkspaceSSHFishShellTests"
+    if selector not in helper.FOCUSED_GATE_SELECTORS:
+        print(f"FAIL: known hanging suite remains in broad shards: {selector}")
+        return 1
+
+    workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    match = re.search(r"(?ms)^  app-host-unit-tests:\n(.*?)(?=^  [A-Za-z0-9_-]+:\n)", workflow)
+    if match is None:
+        print("FAIL: app-host-unit-tests job missing")
+        return 1
+    job = match.group(1)
+    broad = job.find("- name: Run unit tests")
+    gate_header = "- name: Run SSH fish foreground-auth hang regression"
+    if job.count(gate_header) != 1 or job.count(selector) != 1:
+        print("FAIL: known SSH/fish hang must have exactly one isolated gate")
+        return 1
+    isolated = job.find(gate_header)
+    if broad < 0 or isolated < 0 or isolated < broad:
+        print("FAIL: known SSH/fish hang must run as an isolated tail gate after broad batches")
+        return 1
+
+    next_step = job.find("\n      - name: ", isolated + len(gate_header))
+    tail = job[isolated:next_step if next_step >= 0 else None]
+    required = (
+        "!cancelled()",
+        "timeout-minutes: 6",
+        "-only-testing:cmuxTests/WorkspaceSSHFishShellTests",
+        'CMUX_APP_HOST_XCODEBUILD_ATTEMPTS: "1"',
+        "-test-timeouts-enabled YES",
+        "-default-test-execution-time-allowance 180",
+        "-maximum-test-execution-time-allowance 180",
+        "test-without-building",
+        "Executed [1-9][0-9]* tests?",
+    )
+    missing = [value for value in required if value not in tail]
+    if missing:
+        print(f"FAIL: SSH/fish isolation gate is missing: {missing}")
+        return 1
+
+    print("PASS: unresolved SSH/fish hang runs once after the broad shard with bounded strict execution")
+    return 0
+
+
 def main() -> int:
     if (rc := check_test_topology_matches_production()) != 0:
         return rc
@@ -586,6 +640,9 @@ def main() -> int:
         return rc
 
     if (rc := check_focused_gates_run_once()) != 0:
+        return rc
+
+    if (rc := check_known_ssh_hang_isolated_after_batch()) != 0:
         return rc
 
     print("PASS: cmuxTests sharding covers extension methods and leaves focused gates explicit")
