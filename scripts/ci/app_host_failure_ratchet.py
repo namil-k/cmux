@@ -174,16 +174,17 @@ def check_shrink_only(
     base: Optional[dict[str, Any]],
     *,
     base_ref: str,
+    baseline_ref: str = "origin/main",
 ) -> tuple[bool, str]:
     if base is None:
         baseline = current["baseline_sha"]
         ancestry = subprocess.run(
-            ["git", "merge-base", "--is-ancestor", baseline, base_ref],
+            ["git", "merge-base", "--is-ancestor", baseline, baseline_ref],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )
         if ancestry.returncode != 0:
-            return False, f"initial catalog baseline {baseline} is not an ancestor of {base_ref}"
+            return False, f"initial catalog baseline {baseline} is not an ancestor of {baseline_ref}"
         return True, f"initial catalog bootstrap pinned to {baseline}"
 
     added = sorted(known_ids(current) - known_ids(base))
@@ -202,6 +203,7 @@ def main() -> int:
     parser.add_argument("--exit-code", type=int)
     parser.add_argument("--check-shrink-only", action="store_true")
     parser.add_argument("--base-ref")
+    parser.add_argument("--baseline-ref", default="origin/main")
     args = parser.parse_args()
 
     try:
@@ -216,7 +218,12 @@ def main() -> int:
             return 2
         try:
             base = catalog_from_git(args.base_ref, str(args.catalog))
-            passed, message = check_shrink_only(catalog, base, base_ref=args.base_ref)
+            passed, message = check_shrink_only(
+                catalog,
+                base,
+                base_ref=args.base_ref,
+                baseline_ref=args.baseline_ref,
+            )
         except (json.JSONDecodeError, ValueError) as exc:
             print(f"invalid base app-host known-failure catalog: {exc}", file=sys.stderr)
             return 2
