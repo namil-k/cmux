@@ -176,6 +176,21 @@ class AppHostFailureRatchetTests(unittest.TestCase):
         self.assertFalse(passed)
         self.assertIn("exited 65", message)
 
+    def test_known_failure_only_normalizes_xcodebuild_status_65(self) -> None:
+        identifier = "xctest:cmuxTests.ExampleTests/testExample"
+        output = xctest_failure(identifier)
+        known = catalog((identifier, "xctest"))
+        self.assertTrue(MODULE.evaluate(output, exit_code=65, catalog=known)[0])
+        for status in (1, 70, 124, 134):
+            with self.subTest(status=status):
+                passed, message = MODULE.evaluate(
+                    output,
+                    exit_code=status,
+                    catalog=known,
+                )
+                self.assertFalse(passed)
+                self.assertIn("only for xcodebuild status 65", message)
+
     def test_catalog_rejects_duplicate_ids(self) -> None:
         identifier = "xctest:cmuxTests.ExampleTests/testExample"
         value = {
