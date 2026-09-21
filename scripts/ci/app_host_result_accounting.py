@@ -182,6 +182,20 @@ def validate_catalog(data: Any) -> dict[str, dict[str, Any]]:
         if issue is not None and (not isinstance(issue, int) or issue <= 0):
             raise ValueError(f"known-failure {identifier} issue must be a positive integer")
         normalized[identifier] = metadata
+    bootstrap_main_sha = data.get("bootstrap_main_sha")
+    if normalized:
+        if not isinstance(bootstrap_main_sha, str) or not re.fullmatch(
+            r"[0-9a-f]{40}", bootstrap_main_sha
+        ):
+            raise ValueError(
+                "non-empty known-failure catalog requires a 40-hex bootstrap_main_sha"
+            )
+    elif bootstrap_main_sha is not None and (
+        not isinstance(bootstrap_main_sha, str)
+        or not re.fullmatch(r"[0-9a-f]{40}", bootstrap_main_sha)
+    ):
+        raise ValueError("bootstrap_main_sha must be null or a 40-hex commit")
+
     return normalized
 
 
