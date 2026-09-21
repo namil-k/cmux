@@ -1,0 +1,388 @@
+#!/usr/bin/env python3
+"""Typed app-host test inventory and known-main failure accounting."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import re
+import sys
+from pathlib import Path
+from typing import Any, Iterable
+
+ALLOWED_CLASSIFICATIONS = {
+    "product bug",
+    "stale test",
+    "test bug",
+    "host/display dependency",
+    "timeout/hang",
+    "crash",
+    "unknown",
+}
+
+RESULT_PRIORITY = {
+    "Failed": 5,
+    "unknown": 4,
+    "Skipped": 3,
+    "Expected Failure": 2,
+    "Passed": 1,
+}
+
+RESTART_MARKER = "Restarting after unexpected exit, crash, or test timeout"
+OUTER_TIMEOUT_RE = re.compile(r"xcodebuild unit-test batch .* timeout after")
+IDLE_TIMEOUT_RE = re.compile(r"Idle timed out after .*no test progress", re.IGNORECASE)
+TERMINAL_MARKER_RE = re.compile(r"\*\* TEST (?:SUCCEEDED|FAILED) \*\*")
+
+
+def canonical_identifier(value: str) -> str:
+    value = value.strip()
+    if value.startswith("test://"):
+        pieces = [piece for piece in value.split("/") if piece]
+        if "cmuxTests" in pieces:
+            value = "/".join(pieces[pieces.index("cmuxTests") + 1 :])
+        elif len(pieces) >= 2:
+            value = "/".join(pieces[-2:])
+    if value.startswith("cmuxTests/"):
+        value = value[len("cmuxTests/") :]
+    if value.startswith("cmuxTests."):
+        value = value[len("cmuxTests.") :]
+    return value.strip("/")
+
+
+def comparable_identifier(value: str) -> str:
+    value = canonical_identifier(value)
+    return value[:-2] if value.endswith("()") else value
+
+
+def selector_value(raw: str) -> str:
+    raw = raw.strip()
+    if raw.startswith("-only-testing:"):
+        raw = raw[len("-only-testing:") :]
+    return canonical_identifier(raw)
+
+
+def selector_matches(identifier: str, selector: str) -> bool:
+    identifier_cmp = comparable_identifier(identifier)
+    selector_cmp = comparable_identifier(selector_value(selector))
+    return identifier_cmp == selector_cmp or identifier_cmp.startswith(selector_cmp + "/")
+
+
+def _children(node: dict[str, Any]) -> list[Any]:
+    children = node.get("children")
+    return children if isinstance(children, list) else []
+
+
+def parse_enumeration(data: Any) -> set[str]:
+    """Return leaf test identifiers from xcodebuild -enumerate-tests JSON."""
+    tests: set[str] = set()
+
+    def walk(node: Any) -> None:
+        if isinstance(node, list):
+            for child in node:
+                walk(child)
+            return
+        if not isinstance(node, dict):
+            return
+
+        children = _children(node)
+        identifier = None
+        for key in ("identifier", "testIdentifier", "nodeIdentifier"):
+            candidate = node.get(key)
+            if isinstance(candidate, str) and candidate.strip():
+                identifier = canonical_identifier(candidate)
+                break
+
+        if identifier and not children and "/" in identifier:
+            tests.add(identifier)
+
+        for value in node.values():
+            if isinstance(value, (dict, list)):
+                walk(value)
+
+    walk(data)
+    return tests
+
+
+def parse_xcresult_tests(data: Any) -> dict[str, str]:
+    """Return typed Test Case results from xcresulttool test-results tests JSON."""
+    results: dict[str, str] = {}
+
+    def record(identifier: str, result: str) -> None:
+        identifier = canonical_identifier(identifier)
+        if not identifier:
+            return
+        previous = results.get(identifier)
+        if previous is None or RESULT_PRIORITY.get(result, 0) > RESULT_PRIORITY.get(previous, 0):
+            results[identifier] = result
+
+    def walk(node: Any) -> None:
+        if isinstance(node, list):
+            for child in node:
+                walk(child)
+            return
+        if not isinstance(node, dict):
+            return
+
+        if node.get("nodeType") == "Test Case":
+            identifier = node.get("nodeIdentifier") or node.get("testIdentifier")
+            result = node.get("result", "unknown")
+            if isinstance(identifier, str) and isinstance(result, str):
+                record(identifier, result)
+
+        for value in node.values():
+            if isinstance(value, (dict, list)):
+                walk(value)
+
+    walk(data)
+    return results
+
+
+def load_json(path: Path) -> Any:
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def load_inventory(path: Path) -> set[str]:
+    data = load_json(path)
+    if isinstance(data, dict) and isinstance(data.get("tests"), list):
+        return {canonical_identifier(str(item)) for item in data["tests"]}
+    return parse_enumeration(data)
+
+
+def load_selectors(path: Path) -> list[str]:
+    selectors = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if line:
+            selectors.append(selector_value(line))
+    return selectors
+
+
+def validate_catalog(data: Any) -> dict[str, dict[str, Any]]:
+    if not isinstance(data, dict) or data.get("version") != 1:
+        raise ValueError("known-failure catalog must be an object with version=1")
+    tests = data.get("tests")
+    if not isinstance(tests, dict):
+        raise ValueError("known-failure catalog tests must be an object")
+
+    normalized: dict[str, dict[str, Any]] = {}
+    for raw_identifier, metadata in tests.items():
+        if not isinstance(raw_identifier, str) or not raw_identifier.strip():
+            raise ValueError("known-failure test identifiers must be non-empty strings")
+        identifier = canonical_identifier(raw_identifier)
+        if identifier in normalized:
+            raise ValueError(f"duplicate known-failure identifier after normalization: {identifier}")
+        if not isinstance(metadata, dict):
+            raise ValueError(f"known-failure metadata for {identifier} must be an object")
+        classification = metadata.get("classification")
+        if classification not in ALLOWED_CLASSIFICATIONS:
+            raise ValueError(
+                f"known-failure {identifier} has invalid classification {classification!r}"
+            )
+        issue = metadata.get("issue")
+        if issue is not None and (not isinstance(issue, int) or issue <= 0):
+            raise ValueError(f"known-failure {identifier} issue must be a positive integer")
+        normalized[identifier] = metadata
+    return normalized
+
+
+def load_catalog(path: Path) -> dict[str, dict[str, Any]]:
+    return validate_catalog(load_json(path))
+
+
+def validate_selectors(inventory: set[str], selectors: Iterable[str]) -> list[str]:
+    missing = []
+    for selector in selectors:
+        if not any(selector_matches(identifier, selector) for identifier in inventory):
+            missing.append(selector_value(selector))
+    return missing
+
+
+def merge_result_files(paths: Iterable[Path]) -> dict[str, str]:
+    merged: dict[str, str] = {}
+    for path in paths:
+        parsed = parse_xcresult_tests(load_json(path))
+        for identifier, result in parsed.items():
+            previous = merged.get(identifier)
+            if previous is None or RESULT_PRIORITY.get(result, 0) > RESULT_PRIORITY.get(previous, 0):
+                merged[identifier] = result
+    return merged
+
+
+def run_is_complete(log_text: str) -> tuple[bool, str]:
+    if RESTART_MARKER in log_text:
+        return False, "app host restarted after test execution"
+    if OUTER_TIMEOUT_RE.search(log_text):
+        return False, "outer batch timeout fired"
+    if IDLE_TIMEOUT_RE.search(log_text):
+        return False, "xcodebuild idle timeout fired"
+    if not TERMINAL_MARKER_RE.search(log_text):
+        return False, "xcodebuild terminal test marker is missing"
+    return True, "complete"
+
+
+def check_run(
+    *,
+    inventory: set[str],
+    selectors: list[str],
+    results: dict[str, str],
+    known: dict[str, dict[str, Any]],
+    log_text: str,
+    xcode_status: int,
+) -> tuple[bool, list[str]]:
+    messages: list[str] = []
+
+    missing_inventory = validate_selectors(inventory, selectors)
+    if missing_inventory:
+        for selector in missing_inventory:
+            messages.append(f"selector matched zero built tests: {selector}")
+        return False, messages
+
+    complete, reason = run_is_complete(log_text)
+    if not complete:
+        messages.append(f"incomplete app-host run: {reason}")
+        return False, messages
+
+    if not results:
+        messages.append("typed xcresult contains zero Test Case nodes")
+        return False, messages
+
+    missing_execution = validate_selectors(set(results), selectors)
+    if missing_execution:
+        for selector in missing_execution:
+            messages.append(f"selector produced zero typed test results: {selector}")
+        return False, messages
+
+    if xcode_status not in {0, 65}:
+        messages.append(f"xcodebuild status {xcode_status} is not ratchetable")
+        return False, messages
+
+    failures = {identifier for identifier, result in results.items() if result == "Failed"}
+    new_failures = sorted(failures - set(known))
+    if new_failures:
+        for identifier in new_failures:
+            messages.append(f"RATCHET_NEW_FAILURE {identifier}")
+        return False, messages
+
+    if xcode_status == 65 and not failures:
+        messages.append("xcodebuild exited 65 without a typed failed Test Case")
+        return False, messages
+    if xcode_status == 0 and failures:
+        messages.append("xcodebuild exited 0 while typed test failures were present")
+        return False, messages
+
+    known_failures = sorted(failures & set(known))
+    if known_failures:
+        for identifier in known_failures:
+            messages.append(f"RATCHET_KNOWN_FAILURE {identifier}")
+        messages.append(
+            f"known-main failures tolerated: {len(known_failures)}; "
+            f"typed test cases: {len(results)}"
+        )
+    else:
+        messages.append(f"typed app-host run passed: {len(results)} test cases")
+    return True, messages
+
+
+def write_inventory(input_path: Path, output_path: Path) -> None:
+    tests = sorted(parse_enumeration(load_json(input_path)))
+    suites = sorted({identifier.split("/", 1)[0] for identifier in tests if "/" in identifier})
+    payload = {
+        "version": 1,
+        "source": str(input_path),
+        "test_count": len(tests),
+        "suite_count": len(suites),
+        "suites": suites,
+        "tests": tests,
+    }
+    output_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    print(f"enumerated {len(tests)} tests across {len(suites)} suites")
+
+
+def command_check_run(args: argparse.Namespace) -> int:
+    inventory = load_inventory(args.inventory)
+    selectors = load_selectors(args.selectors)
+    known = load_catalog(args.known)
+    result_paths = [Path(path) for path in args.tests_json]
+    missing_files = [str(path) for path in result_paths if not path.is_file()]
+    if missing_files:
+        print("missing typed xcresult JSON: " + ", ".join(missing_files), file=sys.stderr)
+        return 2
+    results = merge_result_files(result_paths)
+    log_text = args.log.read_text(encoding="utf-8", errors="replace")
+    passed, messages = check_run(
+        inventory=inventory,
+        selectors=selectors,
+        results=results,
+        known=known,
+        log_text=log_text,
+        xcode_status=args.xcode_status,
+    )
+    for message in messages:
+        print(message, file=sys.stdout if passed else sys.stderr)
+    return 0 if passed else 1
+
+
+def command_catalog_diff(args: argparse.Namespace) -> int:
+    old = load_catalog(args.base)
+    new = load_catalog(args.current)
+    additions = sorted(set(new) - set(old))
+    if additions:
+        for identifier in additions:
+            print(f"known-failure catalog may only shrink: added {identifier}", file=sys.stderr)
+        return 1
+    print(f"known-failure catalog shrank or stayed equal: {len(old)} -> {len(new)}")
+    return 0
+
+
+def command_validate_catalog(args: argparse.Namespace) -> int:
+    tests = load_catalog(args.catalog)
+    print(f"valid known-failure catalog: {len(tests)} tests")
+    return 0
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description=__doc__)
+    subparsers = parser.add_subparsers(dest="command", required=True)
+
+    inventory = subparsers.add_parser("inventory")
+    inventory.add_argument("enumeration", type=Path)
+    inventory.add_argument("--output", type=Path, required=True)
+
+    check = subparsers.add_parser("check-run")
+    check.add_argument("--inventory", type=Path, required=True)
+    check.add_argument("--selectors", type=Path, required=True)
+    check.add_argument("--known", type=Path, required=True)
+    check.add_argument("--log", type=Path, required=True)
+    check.add_argument("--xcode-status", type=int, required=True)
+    check.add_argument("--tests-json", nargs="+", required=True)
+
+    catalog_diff = subparsers.add_parser("catalog-diff")
+    catalog_diff.add_argument("--base", type=Path, required=True)
+    catalog_diff.add_argument("--current", type=Path, required=True)
+
+    validate = subparsers.add_parser("validate-catalog")
+    validate.add_argument("catalog", type=Path)
+
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = build_parser().parse_args(argv)
+    try:
+        if args.command == "inventory":
+            write_inventory(args.enumeration, args.output)
+            return 0
+        if args.command == "check-run":
+            return command_check_run(args)
+        if args.command == "catalog-diff":
+            return command_catalog_diff(args)
+        if args.command == "validate-catalog":
+            return command_validate_catalog(args)
+    except (OSError, ValueError, json.JSONDecodeError) as error:
+        print(str(error), file=sys.stderr)
+        return 2
+    raise AssertionError(args.command)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
