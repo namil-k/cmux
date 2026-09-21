@@ -13,7 +13,9 @@ final class CloudBrowserAccessState {
     private(set) var hasCommittedNavigation = false
     private(set) var loaded = false
     private(set) var error: String?
-    private(set) var desktopFailure: String?
+    private(set) var desktopConnection: CloudDesktopConnectionState?
+    private var recovery = CloudDesktopRecoveryPolicy()
+    @ObservationIgnored private var desktopCarrierProbe: Task<Void, Never>?
     private var dismissedFailure: String?
     var showsPorts = true
     private(set) var unavailable: String?
@@ -23,7 +25,25 @@ final class CloudBrowserAccessState {
         unavailable = message
     }
 
-    var showsPage: Bool { model?.isReady == true && loaded && error == nil }
+    /// A desktop whose viewer is not connected drops every click and drag,
+    /// so its last framebuffer is never presented as a working page.
+    var showsPage: Bool {
+        model?.isReady == true && loaded && error == nil && desktopConnection?.isConnected != false
+    }
+
+    /// The viewer lost its session and is retrying. Genuine state, not yet a failure.
+    var desktopStatusMessage: String? {
+        guard let desktopConnection, !desktopConnection.isConnected, desktopFailure == nil else { return nil }
+        return String(localized: "cloud.portAccess.desktopReconnecting", defaultValue: "Reconnecting to the Cloud desktop\u{2026}")
+    }
+
+    /// Repeated rebinds onto fresh carriers did not restore a session, so the
+    /// endpoint is not what is broken and the pane reports a real failure.
+    var desktopFailure: String? {
+        guard let desktopConnection else { return nil }
+        guard desktopConnection == .failed || (!desktopConnection.isConnected && recovery.hasExhaustedRebinds) else { return nil }
+        return String(localized: "cloud.portAccess.desktopDisconnected", defaultValue: "The Cloud desktop connection failed. Retry to reconnect to the machine.")
+    }
 
     /// A Cloud document can commit before its render-blocking resources arrive.
     /// Use the pane's backing color through that initial load for every origin;
@@ -48,15 +68,47 @@ final class CloudBrowserAccessState {
 
     /// noVNC's document may finish loading before its RFB/WebSocket fails.
     /// Only the current, committed Cloud Desktop document may report its state.
-    func desktopConnectionDidChange(url: URL, isConnected: Bool) {
+    @discardableResult
+    func desktopConnectionDidChange(url: URL, state: CloudDesktopConnectionState) -> CloudDesktopRecoveryPolicy.Action {
         guard isDesktop, hasCommittedNavigation,
-              let navigationURL, url == navigationURL else { return }
-        if isConnected {
-            desktopFailure = nil
-            dismissedFailure = nil
-        } else {
-            desktopFailure = String(localized: "cloud.portAccess.desktopDisconnected", defaultValue: "The Cloud desktop connection failed. Retry to reconnect to the machine.")
+              let navigationURL, url == navigationURL else { return .idle }
+        desktopConnection = state
+        if state.isConnected { dismissedFailure = nil }
+        return recovery.viewerDidReport(state)
+    }
+
+    /// The shared route's carrier may have been replaced. Read its endpoint
+    /// now rather than trusting a captured one, so a late callback from an
+    /// obsolete attempt cannot reintroduce the endpoint a recovery replaced.
+    @discardableResult
+    func desktopRouteDidChange() -> CloudDesktopRecoveryPolicy.Action {
+        guard isDesktop else { return .idle }
+        return recovery.routeDidChange(currentEndpoint: model?.browserProxy)
+    }
+
+    /// The viewer lost its session. Re-resolve the machine's carrier only when
+    /// the one this document is bound to has actually stopped answering: a
+    /// carrier that still responds is not what broke input, and restarting the
+    /// shared route would interrupt other panes on the same machine.
+    func resolveDesktopCarrierIfGone() {
+        guard let model, let endpoint = model.browserProxy else { return }
+        let target = model.target
+        desktopCarrierProbe?.cancel()
+        desktopCarrierProbe = Task { [weak self] in
+            let reachable = (try? await CloudBrowserRouting.desktopIsReachable(
+                endpoint: endpoint, address: target.host, port: target.port
+            )) ?? false
+            guard !Task.isCancelled, let self, self.model === model,
+                  model.browserProxy == endpoint,
+                  self.desktopConnection?.isConnected == false,
+                  !reachable else { return }
+            model.connectBrowser(force: true)
         }
+    }
+
+    private func cancelDesktopCarrierProbe() {
+        desktopCarrierProbe?.cancel()
+        desktopCarrierProbe = nil
     }
 
     /// Persist the service identity; the local listener only lives for this app run.
@@ -87,7 +139,9 @@ final class CloudBrowserAccessState {
         hasCommittedNavigation = false
         loaded = false
         error = nil
-        desktopFailure = nil
+        desktopConnection = nil
+        recovery.reset()
+        cancelDesktopCarrierProbe()
         dismissedFailure = nil
     }
 
@@ -110,7 +164,7 @@ final class CloudBrowserAccessState {
         hasCommittedNavigation = false
         loaded = false
         error = nil
-        desktopFailure = nil
+        desktopConnection = nil
         dismissedFailure = nil
     }
 
@@ -125,6 +179,8 @@ final class CloudBrowserAccessState {
             navigationURL = url
         }
         hasCommittedNavigation = true
+        // The document now carries this carrier's port and WebSocket token.
+        if isDesktop { recovery.documentDidBind(to: model?.browserProxy) }
     }
 
     func didFinish(url: URL?) {
@@ -144,7 +200,9 @@ final class CloudBrowserAccessState {
         hasCommittedNavigation = false
         loaded = false
         error = nil
-        desktopFailure = nil
+        desktopConnection = nil
+        recovery.reset()
+        cancelDesktopCarrierProbe()
         dismissedFailure = nil
         model?.retry()
     }
@@ -172,7 +230,9 @@ final class CloudBrowserAccessState {
         navigationURL = nil
         loaded = false
         error = nil
-        desktopFailure = nil
+        desktopConnection = nil
+        recovery.reset()
+        cancelDesktopCarrierProbe()
         dismissedFailure = nil
     }
 
