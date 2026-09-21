@@ -593,6 +593,7 @@ jobs:
           python3 tests/test_ci_product_publication.py
           python3 tests/test_ci_app_host_test_inventory.py
           python3 tests/test_ci_app_host_failure_ratchet.py
+          python3 tests/test_ci_app_host_xcresult_capture.py
 
       - name: Validate Python R2 appcast upload guard
         run: ./tests/test_ci_r2_upload_python.sh
