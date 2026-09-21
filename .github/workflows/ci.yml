@@ -1653,23 +1653,35 @@ jobs:
               batch_status=124
             fi
 
-            sleep 0.2
-            kill "$stream_pid" 2>/dev/null || true
-            wait "$stream_pid" 2>/dev/null || true
+            shopt -s nullglob
+            local typed_results=("$result_bundle_root"/cmux-app-host-xcodebuild-"$batch_tag"-pid-*.tests.json)
+            shopt -u nullglob
+            if [ "${#typed_results[@]}" -eq 0 ]; then
+              echo "No typed xcresult test JSON found for $batch_tag" >&2
+              if [ "$batch_status" -ne 0 ]; then
+                return "$batch_status"
+              fi
+              return 1
+            fi
 
-            local classification_status
+            local accounting_status
             set +e
-            python3 scripts/ci/classify-app-host-test-output.py "$batch_output"
-            classification_status=$?
+            python3 scripts/ci/app_host_result_accounting.py check-run \
+              --inventory "$CMUX_APP_HOST_TEST_INVENTORY" \
+              --selectors "$shard_args" \
+              --known scripts/ci/app-host-known-failures.json \
+              --log "$batch_output" \
+              --xcode-status "$batch_status" \
+              --tests-json "${typed_results[@]}"
+            accounting_status=$?
             set -e
-
-            # xcodebuild's non-zero status is always authoritative. For a zero
-            # xcodebuild status, the classifier still requires positive,
-            # completed XCTest/Swift Testing execution.
+            if [ "$accounting_status" -eq 0 ]; then
+              return 0
+            fi
             if [ "$batch_status" -ne 0 ]; then
               return "$batch_status"
             fi
-            return "$classification_status"
+            return "$accounting_status"
           }
 
           run_unit_tests() {
