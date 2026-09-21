@@ -77,6 +77,19 @@ class AppHostFailureRatchetTests(unittest.TestCase):
         self.assertFalse(passed)
         self.assertIn("new app-host failure", message)
 
+    def test_quoted_swift_display_name_matches_census_identifier(self) -> None:
+        display = '"parameterized thing(value: 3)"'
+        identifier = "swift:parameterized thing(value: 3)"
+        ids = MODULE.failure_ids(swift_failure(display))
+        self.assertEqual(ids, {identifier})
+        passed, message = MODULE.evaluate(
+            swift_failure(display),
+            exit_code=65,
+            catalog=catalog((identifier, "swift-testing")),
+        )
+        self.assertTrue(passed)
+        self.assertIn(identifier, message)
+
     def test_known_swift_testing_failure_is_tolerated(self) -> None:
         name = "parameterizedThing(value: 3)"
         identifier = f"swift:{name}"
