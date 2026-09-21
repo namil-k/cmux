@@ -64,6 +64,11 @@ def failure_ids(output: str) -> set[str]:
     for line in io.StringIO(clean(output)):
         if "known issue" in line.lower():
             continue
+        # Swift Testing prefixes both individual tests and the aggregate run
+        # summary with the same failure glyph. The summary is verdict evidence,
+        # never a test identifier.
+        if SWIFT_SUMMARY_RE.search(line):
+            continue
         match = XCTEST_ERROR_RE.search(line) or XCTEST_FAILED_RE.search(line)
         if match:
             ids.add(f"xctest:{match.group('suite')}/{match.group('test')}")
