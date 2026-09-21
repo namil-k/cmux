@@ -21,12 +21,19 @@ def job(name: str) -> str:
 
 admission = job("macos-compile-admission")
 consumer = job("app-host-unit-tests")
+packages = job("swift-package-tests")
 restore = Path("scripts/ci/restore-app-host-test-product.sh").read_text(encoding="utf-8")
 
 assert "scripts/ci/compile-app-host-test-product.sh resolve" in admission
 assert "scripts/ci/compile-app-host-test-product.sh build" in admission
 assert "Restore compiled app-host test product" in consumer
 assert "test-without-building" in consumer
+
+# CmuxTerminalCore's split-theme coverage belongs to the strict package gate.
+# Do not rebuild/relink the same package test product inside an app-host shard.
+assert "CmuxTerminalCore" in packages
+assert "CmuxTerminalCore-Package" not in consumer
+assert "cmux-terminal-core-split-theme" not in consumer
 
 for forbidden in (
     "-resolvePackageDependencies",
