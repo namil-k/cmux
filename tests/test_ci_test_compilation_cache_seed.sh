@@ -172,20 +172,7 @@ for expected in \
     exit 1
   fi
 done
-if [ "$(grep -c '^---  exit 1
-fi
-# `build` compiles no test files: the cmux-unit scheme marks cmuxTests
-# buildForRunning=NO.
-if grep -Fxq -- build "$STUB_XCODEBUILD_ARGS"; then
-  echo "FAIL: the app-host test product must be compiled with build-for-testing, not build"
-  exit 1
-fi
-if grep -Fxq -- cmux-numeric-locale "$STUB_XCODEBUILD_ARGS"; then
-  echo "FAIL: numeric locale must reuse the cmux-unit xctestrun instead of compiling a third scheme"
-  exit 1
-fi
-echo "PASS: the build compiles two shared schemes for testing with the compilation cache on"
-if ! grep -Fxq 'build output for cmux' "$TMP_DIR/derived/cmux-build.log" \
+if [ "$(grep -c '^---if ! grep -Fxq 'build output for cmux' "$TMP_DIR/derived/cmux-build.log" \
   || grep -Fq 'build output for cmux-unit' "$TMP_DIR/derived/cmux-build.log"; then
   echo "FAIL: the warning-budget log must retain only app/UI build output"
   exit 1
@@ -239,7 +226,11 @@ if grep -Fxq -- build "$STUB_XCODEBUILD_ARGS"; then
   echo "FAIL: the app-host test product must be compiled with build-for-testing, not build"
   exit 1
 fi
-echo "PASS: the build compiles all three schemes for testing with the compilation cache on"
+if grep -Fxq -- cmux-numeric-locale "$STUB_XCODEBUILD_ARGS"; then
+  echo "FAIL: numeric locale must reuse the cmux-unit xctestrun instead of compiling a third scheme"
+  exit 1
+fi
+echo "PASS: the build compiles two shared schemes for testing with the compilation cache on"
 if ! grep -Fxq 'build output for cmux' "$TMP_DIR/derived/cmux-build.log" \
   || grep -Fq 'build output for cmux-unit' "$TMP_DIR/derived/cmux-build.log"; then
   echo "FAIL: the warning-budget log must retain only app/UI build output"
