@@ -73,31 +73,55 @@ def _children(node: dict[str, Any]) -> list[Any]:
 
 
 def parse_enumeration(data: Any) -> set[str]:
-    """Return leaf test identifiers from xcodebuild -enumerate-tests JSON."""
+    """Return test identifiers from xcodebuild hierarchical enumeration JSON."""
     tests: set[str] = set()
 
-    def walk(node: Any) -> None:
+    def explicit_identifier(node: dict[str, Any]) -> str | None:
+        for key in ("identifier", "testIdentifier", "nodeIdentifier"):
+            candidate = node.get(key)
+            if isinstance(candidate, str) and candidate.strip():
+                return canonical_identifier(candidate)
+        return None
+
+    def walk(node: Any, path: tuple[str, ...] = ()) -> None:
         if isinstance(node, list):
             for child in node:
-                walk(child)
+                walk(child, path)
             return
         if not isinstance(node, dict):
             return
 
         children = _children(node)
-        identifier = None
-        for key in ("identifier", "testIdentifier", "nodeIdentifier"):
-            candidate = node.get(key)
-            if isinstance(candidate, str) and candidate.strip():
-                identifier = canonical_identifier(candidate)
-                break
+        identifier = explicit_identifier(node)
+        name = node.get("name")
+        clean_name = name.strip() if isinstance(name, str) else ""
 
-        if identifier and not children and "/" in identifier:
-            tests.add(identifier)
+        if not children:
+            if identifier and "/" in identifier:
+                tests.add(identifier)
+                return
+            if clean_name:
+                if "/" in clean_name:
+                    tests.add(canonical_identifier(clean_name))
+                    return
+                # Hierarchical Xcode enumeration groups plan -> target -> suite
+                # -> test. Drop all plan/target ancestors and retain the nearest
+                # suite path plus leaf test. Nested Swift Testing suites remain
+                # represented because every suite level after cmuxTests is kept.
+                pieces = [piece for piece in (*path, clean_name) if piece]
+                if "cmuxTests" in pieces:
+                    pieces = pieces[pieces.index("cmuxTests") + 1 :]
+                elif len(pieces) >= 2:
+                    pieces = pieces[-2:]
+                if len(pieces) >= 2:
+                    tests.add(canonical_identifier("/".join(pieces)))
+            return
 
-        for value in node.values():
-            if isinstance(value, (dict, list)):
-                walk(value)
+        next_path = path
+        if clean_name:
+            next_path = (*path, clean_name)
+        for child in children:
+            walk(child, next_path)
 
     walk(data)
     return tests
